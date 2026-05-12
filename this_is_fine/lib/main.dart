@@ -20,9 +20,14 @@ class _ThisIsFineGameState extends State<ThisIsFineGame> {
   bool hasGameStarted = false;
   bool isGameOver = false; // NEW: Track game state
   
+  bool isStressedMode = false; // false = Fine, true = Stressed
   double panicLevel = 0.0;
   List<Offset> firePositions = [];
   Timer? gameTimer;
+
+  bool isPaused = false;
+  int score = 0;
+  double scoreCounter = 0.0; // Prevents score inflation on stressed mode
 
   List<Offset> coffeePositions = [];
   bool isCaffeinated = false; // Tracks if the bar is currently paused
@@ -36,80 +41,114 @@ class _ThisIsFineGameState extends State<ThisIsFineGame> {
     //startGame();
   }
 
+bool isInDogZone(Offset position) {
+  final RenderBox? renderBox = dogKey.currentContext?.findRenderObject() as RenderBox?;
+  if (renderBox == null) return false;
+
+  // Get the absolute position of the dog on the screen
+  Offset dogPosition = renderBox.localToGlobal(Offset.zero);
+  Size dogSize = renderBox.size;
+
+  // Define the boundary (with a little extra padding)
+  double padding = 20.0;
+  return (position.dx > dogPosition.dx - padding &&
+          position.dx < dogPosition.dx + dogSize.width + padding &&
+          position.dy > dogPosition.dy - padding &&
+          position.dy < dogPosition.dy + dogSize.height + padding);
+}
+
+void resetGame() {
+  setState(() {
+    panicLevel = 0.0;
+    firePositions.clear();
+    coffeePositions.clear();
+    isGameOver = false;
+    isCaffeinated = false;
+    isCoffeeOnScreen = false;
+    isCoffeeCooldown = false;
+    score = 0; // Reset the new score variable
+    scoreCounter = 0.0; // Reset the score buffer
+    
+    // Stop the existing timer if it's running to prevent "double timers"
+    gameTimer?.cancel(); 
+  });
+}
+
   void startGame() {
+
     setState(() {
       panicLevel = 0.0;
       firePositions.clear();
       coffeePositions.clear();
       isGameOver = false;
     });
+        
+    // Use 500ms (0.5s) if stressed, otherwise 1000ms (1s)
+    Duration tickRate = isStressedMode 
+        ? const Duration(milliseconds: 500) 
+        : const Duration(seconds: 1);
 
-    gameTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    gameTimer = Timer.periodic(tickRate, (timer) {
       setState(() {
-        // ONLY increase panic if NOT caffeinated
-        if (!isCaffeinated) {
-          panicLevel += 0.05;
-        }
+        if (!isPaused) { // Only score if not paused
+          // 1. Calculate the score based on the mode's actual time
+          // This ensures 1 point per 1 second in both modes
+          double pointsToAdd = isStressedMode ? 0.5 : 1.0;
+          scoreCounter += pointsToAdd;
+          
+          // Convert to an integer for the display
+          score = scoreCounter.floor();
 
-        // Check for Game Over
-        if (panicLevel >= 1.0) {
-          timer.cancel();
-          isGameOver = true;
-        }
+          // ONLY increase panic if NOT caffeinated
+          if (!isCaffeinated) {
+            panicLevel += isStressedMode ? 0.025 : 0.05;
+          }
 
-        double screenWidth = MediaQuery.of(context).size.width;
-        double screenHeight = MediaQuery.of(context).size.height;
+          // Check for Game Over
+          if (panicLevel >= 1.0) {
+            timer.cancel();
+            isGameOver = true;
+          }
 
-        // Define vertical constraints
-        double topSafetyMargin = 60.0; // 50px + a little extra for comfort
-        double bottomPanicBarHeight = 80.0; // Adjust this to match your bar's height/padding
-        double playableHeight = screenHeight - topSafetyMargin - bottomPanicBarHeight;
+          double screenWidth = MediaQuery.of(context).size.width;
+          double screenHeight = MediaQuery.of(context).size.height;
 
-        bool isInDogZone(Offset position) {
-          final RenderBox? renderBox = dogKey.currentContext?.findRenderObject() as RenderBox?;
-          if (renderBox == null) return false;
+          // Define vertical constraints
+          double topSafetyMargin = 60.0; // 50px + a little extra for comfort
+          double bottomPanicBarHeight = 80.0; // Adjust this to match your bar's height/padding
+          double playableHeight = screenHeight - topSafetyMargin - bottomPanicBarHeight;
+    
+          // --- FIRE SPAWNING LOGIC ---
+          if (Random().nextBool()) {
+            Offset newPos;
+            do {
+              newPos = Offset(
+                Random().nextDouble() * (screenWidth - 40), // 40 is fire width padding
+                topSafetyMargin + (Random().nextDouble() * playableHeight),
+              );
+            } while (isInDogZone(newPos));
 
-          // Get the absolute position of the dog on the screen
-          Offset dogPosition = renderBox.localToGlobal(Offset.zero);
-          Size dogSize = renderBox.size;
+            firePositions.add(newPos);
+          }
 
-          // Define the boundary (with a little extra padding)
-          double padding = 20.0;
-          return (position.dx > dogPosition.dx - padding &&
-                  position.dx < dogPosition.dx + dogSize.width + padding &&
-                  position.dy > dogPosition.dy - padding &&
-                  position.dy < dogPosition.dy + dogSize.height + padding);
-        }
-  
-        // --- FIRE SPAWNING LOGIC ---
-        if (Random().nextBool()) {
-          Offset newPos;
-          do {
-            newPos = Offset(
-              Random().nextDouble() * (screenWidth - 40), // 40 is fire width padding
-              topSafetyMargin + (Random().nextDouble() * playableHeight),
-            );
-          } while (isInDogZone(newPos));
+          // --- COFFEE SPAWNING LOGIC (Merged & Safe) ---
+          // Rules: 10% chance AND no coffee on screen AND no cooldown AND not currently active
+          int coffeeChance = isStressedMode ? 15 : 10; //less chance for stressed mode
+          bool stressRequirement = !isStressedMode || (isStressedMode && panicLevel > 0.65);
+          if (Random().nextInt(coffeeChance) == 1 && !isCoffeeOnScreen && !isCoffeeCooldown && !isCaffeinated && stressRequirement) {
+            Offset newPos;
+            do {
+              newPos = Offset(
+                Random().nextDouble() * (screenWidth - 40),
+                topSafetyMargin + (Random().nextDouble() * playableHeight),
+              );
+            } while (isInDogZone(newPos));
 
-          firePositions.add(newPos);
-        }
+            coffeePositions.add(newPos);
+            isCoffeeOnScreen = true;
+          }
 
-        // --- COFFEE SPAWNING LOGIC (Merged & Safe) ---
-        // Rules: 10% chance AND no coffee on screen AND no cooldown AND not currently active
-        if (Random().nextInt(10) == 1 && !isCoffeeOnScreen && !isCoffeeCooldown && !isCaffeinated) {
-          Offset newPos;
-          do {
-            newPos = Offset(
-              Random().nextDouble() * (screenWidth - 40),
-              topSafetyMargin + (Random().nextDouble() * playableHeight),
-            );
-          } while (isInDogZone(newPos));
-
-          coffeePositions.add(newPos);
-          isCoffeeOnScreen = true;
-        }
-
-      });
+        }});
     });
   }
 
@@ -117,7 +156,8 @@ class _ThisIsFineGameState extends State<ThisIsFineGame> {
     if (isGameOver) return; // Don't allow clicking after death
     setState(() {
       firePositions.removeAt(index);
-      panicLevel = max(0, panicLevel - 0.1);
+      double recoveryAmount = isStressedMode ? 0.02 : 0.04;
+      panicLevel = (panicLevel - recoveryAmount).clamp(0.0, 1.0);
     });
   }
 
@@ -126,7 +166,11 @@ class _ThisIsFineGameState extends State<ThisIsFineGame> {
       coffeePositions.clear(); // Remove the coffee from screen
       isCoffeeOnScreen = false;
       isCaffeinated = true;
-      panicLevel = max(0, panicLevel - 0.1);
+      // Bonus points for drinking coffee
+      scoreCounter += 3.0; // Add to the buffer
+      score = scoreCounter.floor(); // Update the display integer
+      double coffeeRecovery = isStressedMode ? 0.05 : 0.15; 
+      panicLevel = (panicLevel - coffeeRecovery).clamp(0.0, 1.0);
     });
 
     // 1. Duration of the "Rush" (3 seconds)
@@ -150,7 +194,7 @@ class _ThisIsFineGameState extends State<ThisIsFineGame> {
     // If the game hasn't started, show the Menu Screen
     if (!hasGameStarted) {
       return Scaffold(
-        backgroundColor: Colors.orange[100],
+        backgroundColor: isStressedMode ? Colors.red[100] : Colors.orange[100],
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -179,10 +223,39 @@ class _ThisIsFineGameState extends State<ThisIsFineGame> {
                   style: TextStyle(color: Colors.black, fontSize: 20, fontWeight: FontWeight.bold),
                 ),
               ),
+              const SizedBox(height: 30),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 40),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end, // Aligns to the right
+                  children: [
+                    Text(
+                      isStressedMode ? "STRESSED" : "FINE",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: isStressedMode ? Colors.red : Colors.green,
+                      ),
+                    ),
+                    Switch(
+                      value: isStressedMode,
+                      activeColor: Colors.red,
+                      onChanged: (value) {
+                        setState(() {
+                          isStressedMode = value;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
               const SizedBox(height: 20),
-              const Text(
-                "Tap the fires to stay 'fine'.\nLet dog drink coffee to 'chill' temporarily.",
-                style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+              Text(
+                isStressedMode
+                ?
+                "'Stressed' mode activated. Enjoy the fiery chaos...\nCoffee is a privilege!"
+                :
+                "Tap the fires to stay 'fine'.\nLet dog drink coffee to 'chill' temporarily."
+                ,style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
                 textAlign: TextAlign.center,
               ),
             ],
@@ -193,7 +266,9 @@ class _ThisIsFineGameState extends State<ThisIsFineGame> {
 
     // ELSE: Show the existing game code
     return Scaffold(
-      backgroundColor: Color.lerp(Colors.orange[100], Colors.red[900], panicLevel),
+      backgroundColor: isStressedMode ?
+      Color.lerp(Colors.red[100], Colors.purple[900], panicLevel) :
+      Color.lerp(Colors.orange[100], Colors.red[900], panicLevel),
       body: Stack(
         children: [
           // 1. FIRES (Now at the very back)
@@ -302,10 +377,26 @@ class _ThisIsFineGameState extends State<ThisIsFineGame> {
                       fontWeight: FontWeight.w900
                     ),
                   ),
+                  const SizedBox(height: 20),
+
+                  // THE FINAL SCORE
+                  Text(
+                    "SCORE: $score",
+                    style: const TextStyle(
+                      color: Colors.white, 
+                      fontSize: 32, 
+                      fontWeight: FontWeight.bold
+                    ),
+                  ),
+
                   // This adds extra space so you can see the 💀 behind the UI
                   const SizedBox(height: 200), 
+                  
                   ElevatedButton(
-                    onPressed: startGame,
+                    onPressed: () {
+                      resetGame();
+                      startGame();
+                    },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.orange,
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
@@ -348,6 +439,71 @@ class _ThisIsFineGameState extends State<ThisIsFineGame> {
               minHeight: 10,
             ),
           ),
+
+          // 5. SCORE DISPLAY & PAUSE BUTTON (Above everything else)
+          // --- SCORE DISPLAY (Top Left) ---
+          Positioned(
+            top: 60,
+            left: 20,
+            child: Text("Score: $score", style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+          ),
+
+          // --- PAUSE BUTTON (Top Right) ---
+          Positioned(
+            top: 50,
+            right: 10,
+            child: IconButton(
+              icon: const Icon(Icons.pause_circle_filled, size: 40),
+              onPressed: () => setState(() => isPaused = true),
+            ),
+          ),
+
+          // --- PAUSE OVERLAY ---
+          if (isPaused)
+            Container(
+              color: Colors.black.withOpacity(0.7),
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text(
+                      "PAUSED",
+                      style: TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 10),
+                    // A little tooltip for the cruel ones who want to see it
+                    Text(
+                      "There's no resting,\nonly restart.",
+                      style: TextStyle(color: Colors.grey, fontSize: 18),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 40),
+                    // Restart
+                    ElevatedButton(
+                      onPressed: () {
+                        setState(() {
+                          isPaused = false;
+                          resetGame();
+                          startGame();
+                        });
+                      },
+                      child: const Text("RESTART"),
+                    ),
+                    
+                    ElevatedButton(
+                      onPressed: () {
+                        setState(() {
+                          isPaused = false;
+                          hasGameStarted = false;
+                          resetGame();
+                        });
+                      },
+                      child: const Text("MAIN MENU"),
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );
