@@ -444,14 +444,15 @@ void resetGame() {
           ),
 
           // --- PAUSE BUTTON (Top Right) ---
-          Positioned(
-            top: 50,
-            right: 10,
-            child: IconButton(
-              icon: const Icon(Icons.pause_circle_filled, size: 40),
-              onPressed: () => setState(() => isPaused = true),
+          if (!isGameOver)
+            Positioned(
+              top: 50,
+              right: 10,
+              child: IconButton(
+                icon: const Icon(Icons.pause_circle_filled, size: 40),
+                onPressed: () => setState(() => isPaused = true),
+              ),
             ),
-          ),
 
           // --- PAUSE OVERLAY ---
           if (isPaused)
