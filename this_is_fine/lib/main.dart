@@ -76,12 +76,7 @@ void resetGame() {
 
   void startGame() {
 
-    setState(() {
-      panicLevel = 0.0;
-      firePositions.clear();
-      coffeePositions.clear();
-      isGameOver = false;
-    });
+    resetGame(); // Ensure everything is reset before starting
         
     // Use 500ms (0.5s) if stressed, otherwise 1000ms (1s)
     Duration tickRate = isStressedMode 
